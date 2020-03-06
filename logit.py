@@ -8,10 +8,17 @@ import pickle
 df = pd.read_csv('sequence_data.tsv',sep='\t')
 with open('all','rb') as f:
     test = pickle.load(f)
-#test = df['status'] < 2
+
 status = df.iloc[test].status
 status = np.array(status)
-metrics = [keras.metrics.AUC(name='auc')]
+metrics = [keras.metrics.AUC(name='auc'),
+      keras.metrics.TruePositives(name='tp'),
+      keras.metrics.FalsePositives(name='fp'),
+      keras.metrics.TrueNegatives(name='tn'),
+      keras.metrics.FalseNegatives(name='fn'),
+      keras.metrics.BinaryAccuracy(name='accuracy'),
+      keras.metrics.Precision(name='precision'),
+      keras.metrics.Recall(name='recall')]
 pos = 6931
 neg = 101232
 total = pos + neg
@@ -46,6 +53,9 @@ model = Model(inputs = [seq_input,clip_input,sig_input,shape_input], outputs = o
 opt = keras.optimizers.adam(lr=0.0003)
 model.compile(optimizer = opt, loss = 'binary_crossentropy',
                                   metrics = metrics)
+# To do the training without balancing the loss function:
 model.fit([gen, clip, signal, seq_shape], status, epochs = 25, batch_size = 32, validation_split = 0.1)
-
+# Use weights above to balance loss function:
+model.fit([gen, clip, signal, seq_shape], status, epochs = 25, batch_size = 32, validation_split = 0.1, 
+                                                                       class_weight = weights)
 
