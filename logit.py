@@ -53,9 +53,11 @@ model = Model(inputs = [seq_input,clip_input,sig_input,shape_input], outputs = o
 opt = keras.optimizers.adam(lr=0.0003)
 model.compile(optimizer = opt, loss = 'binary_crossentropy',
                                   metrics = metrics)
-# To do the training without balancing the loss function:
+# To do the training without balancing the loss function, then save weights:
 model.fit([gen, clip, signal, seq_shape], status, epochs = 25, batch_size = 32, validation_split = 0.1)
-# Use weights above to balance loss function:
+model.save_weights('logit_unbalance.h5')
+# Use weights above to balance loss function, then save weights:
 model.fit([gen, clip, signal, seq_shape], status, epochs = 25, batch_size = 32, validation_split = 0.1, 
                                                                        class_weight = weights)
+model.save_weights('logit_balance.h5')
 
