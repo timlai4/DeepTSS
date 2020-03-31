@@ -1,0 +1,51 @@
+---
+title: "Regression Analyses"
+author: "Tim Lai"
+date: "3/30/2020"
+output:
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(ggplot2)
+```
+
+## Loading the data
+We load the testing data which includes the regression analyses from both models. 
+```{r}
+logs <- read.delim("seq_pred.tsv")
+dnn <- read.delim("pred.tsv")
+```
+
+## Overview of data
+The models were trained with a log transform on the scores. We apply a log transform on the scores column to reproduce this. In addition, if we wish to compare the original scores, we need to invert the log on the prediction columns. 
+```{r}
+logs$logscore <- log(logs$score)
+dnn$logscore <- log(dnn$score)
+
+logs$pred <- exp(logs$Lin_Pred)
+dnn$pred <- exp(dnn$DNN_Pred)
+```
+To plot the distribution, we opt for a histogram. We make the bins for the log scores.
+```{r}
+logs$logscore.binned <- cut(logs$logscore, c(-0.1, 0.6, 1, 3, 6))
+logs$logbins <- cut(logs$pred, c(0, 0.6, 1, 3, 6))
+dnn$logbins <- cut(dnn$pred, c(0, 0.6, 1, 3, 6))
+table(logs$logbins)
+table(dnn$logbins)
+```
+
+## Including Plots
+
+We first consider the histogram for the original log scores. 
+```{r, echo=FALSE}
+ggplot(logs) + geom_bar(aes(x=logscore.binned))
+```
+
+Finally, we provide the plots for the log predictions with the bins from the model predictions.
+
+```{r, echo=FALSE}
+ggplot(logs) + geom_bar(aes(x=logbins))
+ggplot(dnn) + geom_bar(aes(x=logbins))
+```
