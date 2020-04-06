@@ -4,7 +4,48 @@ import torch.optim as optim
 import pandas as pd
 import numpy as np
 import pickle
+from torch.utils.data import Dataset, DataLoader
 
+class TSSDataSet(Dataset):
+    def __init__(self, data_dir, indices):
+        '''
+        Parameters
+        ----------
+        data_dir : Directory containing training data for classification
+        '''
+        allind, ind, softind = indices
+        df = pd.read_csv(data_dir + 'raw_data.tsv',sep='\t')
+        status = np.array([1 if score >= 10 else 0 for score in df['score']])
+        df['status'] = status
+        self.data = df.iloc[allind]
+        
+        gen = np.load(data_dir + 'genomic.npy')
+        gen = np.reshape(gen[ind], (gen[ind].shape[0], gen[ind].shape[1], gen[ind].shape[2]))
+        signal = np.load(data_dir + 'signal.npy')
+        signal = np.reshape(signal[ind], (signal[ind].shape[0], signal[ind].shape[1], signal[ind].shape[2]))
+        clip = np.load(data_dir + 'softclipped.npy')
+        clip = np.reshape(clip[softind], (clip[softind].shape[0], clip[softind].shape[1], clip[softind].shape[2]))
+        seq_shape = np.load(data_dir + 'shape.npy')
+        seq_shape = np.reshape(seq_shape[ind], (seq_shape[ind].shape[0], seq_shape[ind].shape[1], seq_shape[ind].shape[2]))     
+        self.inputs = [gen, signal, clip, seq_shape]
+    
+    def __len__(self):
+        return len(self.data)
+    
+    def __getitem__(self, idx):
+        if torch.is_tensor(idx):
+            idx = idx.tolist()
+        
+        status = np.array(self.data.iloc[idx]['status'])
+        status = status.astype('float')
+        gen, signal, clip, seq_shape = self.inputs
+        gen = gen[idx]
+        signal = signal[idx]
+        clip = clip[idx]
+        seq_shape = seq_shape[idx]
+        sample = ([gen, signal, clip, seq_shape], status)
+        return sample
+   
 class Logit(nn.Module):
 
     def __init__(self, input_size):
@@ -16,40 +57,14 @@ class Logit(nn.Module):
         return x
 
 # Load and process the data
-df = pd.read_csv('sequence_data.tsv',sep='\t')
-with open('all','rb') as f:
-    test = pickle.load(f)
-status = df.iloc[test].status
-status = np.array(status)
-
-#pos = 6931
-#neg = 101232
-#total = pos + neg
-
-gen = np.load('genomic.npy')
-gen = np.reshape(gen[test], (gen[test].shape[0], gen[test].shape[1], gen[test].shape[2]))
-signal = np.load('signal.npy')
-signal = np.reshape(signal[test], (signal[test].shape[0], signal[test].shape[1], signal[test].shape[2]))
-clip = np.load('softclipped.npy')
-clip = np.reshape(clip[test], (clip[test].shape[0], clip[test].shape[1], clip[test].shape[2]))
-seq_shape = np.load('shape.npy')
-seq_shape = np.reshape(seq_shape[test], (seq_shape[test].shape[0], seq_shape.shape[1], seq_shape.shape[2]))
-
-# Randomly shuffle the data
-shuffle = np.random.rand(gen.shape[0]).argsort()
-np.take(gen, shuffle, axis = 0, out = gen)
-np.take(signal, shuffle, axis = 0, out = signal)
-np.take(clip, shuffle, axis = 0, out = clip)
-np.take(seq_shape, shuffle, axis = 0, out = seq_shape)
-np.take(status, shuffle, axis = 0, out = status)
-
-gen = torch.from_numpy(gen)
-signal = torch.from_numpy(signal)
-clip = torch.from_numpy(clip)
-seq_shape = torch.from_numpy(seq_shape)
-status = torch.from_numpy(status).view(-1,1).type(torch.float)
-#status = status.view(-1,1)
-#print(status.type())
+data_dir = 'data/yeast_untreated/'
+with open(data_dir + 'train-indices','rb') as f:
+    allind, ind, softind = pickle.load(f)
+ds = TSSDataSet(data_dir = data_dir, indices = [allind, ind, softind])
+bs = 8 # batch size
+dataloader = DataLoader(ds, batch_size = bs, shuffle = True)
+batch = next(iter(dataloader))
+gen, signal, clip, seq_shape = batch[0]
 
 gen = torch.flatten(gen, start_dim = 1)
 signal = torch.flatten(signal, start_dim = 1)
@@ -65,30 +80,38 @@ criterion = nn.BCELoss()
 optimizer = optim.Adam(log.parameters(), lr=0.0003)
 
 num_epochs = 60
-bs = 8
-for epoch in range(num_epochs):
-    running_loss = 0.0
-#    losses = []
-    for i in range(0, inputs.size(0), bs):
-        input_batch = inputs[i:i + bs, :]
-        status_batch = status[i:i + bs, :]
-        # zero the parameter gradients
-        optimizer.zero_grad()
-        # forward + backward + optimize
-        outputs = log(input_batch.float())
-        loss = criterion(outputs, status_batch)
-        loss.backward()
-        optimizer.step()
+def train_model(model, criterion, optimizer, num_epochs = 25):
+    for epoch in range(num_epochs):
+        running_loss = 0.0
+        i = 0
+        for inputs, status in dataloader:
+            status = status.view(-1,1)
+            gen, signal, clip, seq_shape = inputs
+            gen = torch.flatten(gen, start_dim = 1)
+            signal = torch.flatten(signal, start_dim = 1)
+            clip = torch.flatten(clip, start_dim = 1)
+            seq_shape = torch.flatten(seq_shape, start_dim = 1)
+            inputs = torch.cat((gen, signal, clip, seq_shape), 1)
 
-        # print statistics
-        running_loss += loss.item()
-#        losses.append(loss.data.numpy())
-        if i/bs % 2000 == 1999:    # print every 200 mini-batches
-            print('[%d, %5d] loss: %.3f' %
-                  (epoch + 1, i + 1, running_loss / 2000))
-            running_loss = 0.0
-#print(losses[-100:])
-print('Finished Training')
-PATH = 'logit.pth'
-torch.save(log.state_dict(), PATH)
+            # zero the parameter gradients
+            optimizer.zero_grad()
+            # forward + backward + optimize
+            outputs = model(inputs.float())
+            loss = criterion(outputs, status)
+            loss.backward()
+            optimizer.step()
+    
+            # print statistics
+            running_loss += loss.item()
+            if i % 2000 == 1999:    # print every 2020 mini-batches
+                print('[%d, %5d] loss: %.3f' %
+                      (epoch + 1, i + 1, running_loss / 2000))
+            i += 1
+    #print(losses[-100:])
+    print('Finished Training')
+    PATH = model.__class__.__name__ + '.pth'
+    torch.save(model.state_dict(), PATH)
+    
+    return model
 
+log = train_model(log, criterion, optimizer, num_epochs)
